@@ -1,6 +1,6 @@
 /**
  * Directional perception: what lies in each heading, summarised from loaded chunks the bot can observe.
- * EXPLORE options carry these summaries so Jev chooses a heading from evidence (trees, water, animals, open caves,
+ * EXPLORE options carry these summaries so Laya chooses a heading from evidence (trees, water, animals, open caves,
  * unexplored ground, sought blocks) instead of a fixed rule.
  */
 import type { Bot } from 'mineflayer'

@@ -1,4 +1,4 @@
-/** Turns raw world state into a small, bucketed, English observation. No coordinates or arithmetic reach Jev. */
+/** Turns raw world state into a small, bucketed, English observation. No coordinates or arithmetic reach Laya. */
 import type { Bot } from 'mineflayer'
 import { Vec3 } from 'vec3'
 import { config } from '../config.ts'

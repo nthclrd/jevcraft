@@ -1,5 +1,5 @@
 /**
- * Skill library: deterministic, interruptible macro-actions. Jev chooses WHICH skill and WHICH target;
+ * Skill library: deterministic, interruptible macro-actions. Laya chooses WHICH skill and WHICH target;
  * code decides HOW (pathing, tools, batch sizes, safety). Model output never becomes coordinates or code.
  */
 import type { Bot } from 'mineflayer'

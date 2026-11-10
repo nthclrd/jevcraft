@@ -59,7 +59,7 @@ export function setBuiltCheck(fn: typeof builtCheck) {
   builtCheck = fn
 }
 
-/** true/false when code can decide; null when only a judgment (Jev noul) can. */
+/** true/false when code can decide; null when only a judgment (laya noul) can. */
 export function check(bot: Bot, p: Predicate): boolean | null {
   switch (p.kind) {
     case 'built':

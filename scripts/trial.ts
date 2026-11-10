@@ -64,7 +64,7 @@ async function main() {
   const elapsed = ((Date.now() - started) / 60_000).toFixed(1)
   console.log(`=== seed ${seed}: ${log.includes('GOAL COMPLETE') ? 'GOAL COMPLETE' : 'not completed'} in ${elapsed} min`)
   for (const l of lines) if (/GOAL COMPLETE|subgoal done|death cause|final:|timed out/.test(l)) console.log('  ' + l)
-  console.log(`  decisions ${count(/\[jev\]/)}, skills ok ${count(/\[skill\] ok/)}, failed ${count(/\[skill\] FAIL/)}, deaths ${count(/DIED at/)}, llm calls ${count(/plan in|recovery in|facts in/)}`)
+  console.log(`  decisions ${count(/\[laya\]/)}, skills ok ${count(/\[skill\] ok/)}, failed ${count(/\[skill\] FAIL/)}, deaths ${count(/DIED at/)}, llm calls ${count(/plan in|recovery in|facts in/)}`)
 }
 
 main().catch((e) => {

@@ -1,14 +1,15 @@
 {
-  "name": "jevcraft",
+  "name": "layacraft",
   "version": "0.1.0",
   "private": true,
-  "description": "Autonomous adaptive Minecraft bot: Jev (TypeSafe System One) decides fast, an LLM plans and recovers.",
+  "description": "Autonomous adaptive Minecraft bot: Laya (local open-source System One) decides fast, an LLM plans and recovers.",
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "server": "./server/start.sh"
+    "server": "./server/start.sh",
+    "laya": "./scripts/laya-serve.sh"
   },
   "engines": {
     "node": ">=20"

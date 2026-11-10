@@ -1,6 +1,6 @@
 /**
  * The orchestrator. Three layers, each at its own speed:
- *   reflexes (4 Hz, code)  >  Jev tactician (~0.5 s per decision)  >  LLM strategist (seconds, rare)
+ *   reflexes (4 Hz, code)  >  Laya tactician (~33 ms-0.5 s per decision)  >  LLM strategist (seconds, rare)
  * Code owns verification: subgoals complete when a predicate says so, not when a model claims it.
  */
 import type { Bot } from 'mineflayer'
@@ -46,7 +46,7 @@ export class Agent implements Preemptor {
     private knowledge: Knowledge, private acquirer: Acquirer,
   ) {
     bot.on('death', () => this.onDeath())
-    // The server's death message ("Jev tried to swim in lava") is the ground truth the strategist learns from.
+    // The server's death message ("<name> tried to swim in lava") is the ground truth the strategist learns from.
     bot.on('messagestr', (message) => {
       if (!message.startsWith(bot.username + ' ') || !/(slain|lava|fell|drown|burn|blew|shot|skewer|suffocat|starv|died|killed|squash|withered|froze|pricked|impaled|poked)/.test(message)) return
       const death = this.memory.data.deaths.at(-1)
@@ -78,6 +78,11 @@ export class Agent implements Preemptor {
     this.running = false
     this.controller?.abort()
     stopEverything(this.bot)
+  }
+
+  /** True while a goal is being worked on; a reconnect resumes only what was actually running. */
+  get active() {
+    return this.running
   }
 
   async start(goal: string) {
@@ -156,19 +161,19 @@ export class Agent implements Preemptor {
           history: this.history, advice: this.advice, playerInstruction: this.activeInstruction(), lessons: this.memory.data.lessons, space,
         })
       } catch (e) {
-        log('error', `Jev decision failed: ${(e as Error).message}`)
+        log('error', `laya decision failed: ${(e as Error).message}`)
         await pause(1500)
         continue
       }
       this.decisions++
       subgoal.steps = (subgoal.steps ?? 0) + 1
       const p = (n: number | null) => (n === null ? '-' : n.toFixed(2))
-      log('jev', `${decision.latencyMs}ms ${decision.skill}${decision.target ? ' ' + decision.target : ''} (skill ${p(decision.confidence)}, target ${p(decision.targetConfidence)}, danger ${decision.danger.toFixed(1)}) | ${subgoal.description}`)
+      log('laya', `${decision.latencyMs}ms ${decision.skill}${decision.target ? ' ' + decision.target : ''} (skill ${p(decision.confidence)}, target ${p(decision.targetConfidence)}, danger ${decision.danger.toFixed(1)}) | ${subgoal.description}`)
 
-      // Jev judged the situation dangerous: enforce a safety action over the chosen one.
+      // Laya judged the situation dangerous: enforce a safety action over the chosen one.
       const dangerLimit = this.activeInstruction() ? 2.5 : 2 // a player's explicit request accepts more risk
       if (decision.danger >= dangerLimit && !['SHELTER', 'CRAFT'].includes(decision.skill) && space.skills.SHELTER) {
-        log('jev', `danger ${decision.danger.toFixed(2)}: overriding ${decision.skill} with SHELTER`)
+        log('laya', `danger ${decision.danger.toFixed(2)}: overriding ${decision.skill} with SHELTER`)
         decision.skill = 'SHELTER'
         decision.target = null
       }
@@ -177,12 +182,12 @@ export class Agent implements Preemptor {
         continue
       }
       if (decision.skill === 'STUCK') {
-        // Rate-limit System Two: if it was just consulted, fall back to Jev's best non-STUCK option instead of looping.
+        // Rate-limit System Two: if it was just consulted, fall back to Laya's best non-STUCK option instead of looping.
         const fallback = Object.entries(decision.skillProbabilities).filter(([k]) => k !== 'STUCK').sort((a, b) => b[1] - a[1])[0]
         if (Date.now() - this.lastRecovery < 30_000 && fallback) {
           const skill = fallback[0] as SkillName
           const target = space.targets[skill] ? Object.keys(space.targets[skill]!)[0] : null
-          log('jev', `STUCK again right after advice; falling back to ${skill}${target ? ' ' + target : ''}`)
+          log('laya', `STUCK again right after advice; falling back to ${skill}${target ? ' ' + target : ''}`)
           await this.execute(skill, target, needs, subgoal)
           continue
         }
@@ -201,8 +206,8 @@ export class Agent implements Preemptor {
       }
 
       // Confidence gating: act anyway (speed), but ask System Two for advice in the background when unsure.
-      this.lowConfidence = decision.confidence < config.jev.adviseBelow ? this.lowConfidence + 1 : 0
-      if (this.lowConfidence >= config.limits.lowConfidenceStreak) this.adviseInBackground(`Jev uncertain ${this.lowConfidence} times in a row`)
+      this.lowConfidence = decision.confidence < config.laya.adviseBelow ? this.lowConfidence + 1 : 0
+      if (this.lowConfidence >= config.limits.lowConfidenceStreak) this.adviseInBackground(`laya uncertain ${this.lowConfidence} times in a row`)
 
       await this.execute(decision.skill as SkillName, decision.target, needs, subgoal)
       this.decayTabu()

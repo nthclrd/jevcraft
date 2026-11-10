@@ -1,6 +1,8 @@
 #!/bin/sh
-# Local Paper test server: offline mode, localhost only, RCON with a generated password.
-# Running this means you accept the Minecraft EULA (https://aka.ms/MinecraftEULA).
+# Paper test server, bound to this machine by default, RCON with a generated password.
+# Set SERVER_IP=0.0.0.0 to let the bot (or players) on another machine join, and ONLINE_MODE=true
+# to require real Mojang/Microsoft accounts. Running this means you accept the Minecraft EULA
+# (https://aka.ms/MinecraftEULA).
 set -e
 cd "$(dirname "$0")/../server"
 VERSION="${MC_VERSION:-1.21.4}"
@@ -12,13 +14,13 @@ fi
 [ -f .rcon_password ] || (openssl rand -hex 12 > .rcon_password && chmod 600 .rcon_password)
 echo "eula=true" > eula.txt
 cat > server.properties <<PROPS
-online-mode=false
-server-ip=127.0.0.1
-server-port=25565
+online-mode=${ONLINE_MODE:-false}
+server-ip=${SERVER_IP:-127.0.0.1}
+server-port=${SERVER_PORT:-25565}
 spawn-protection=0
 difficulty=easy
 gamemode=survival
-level-seed=${SEED:-jevcraft}
+level-seed=${SEED:-layacraft}
 view-distance=8
 simulation-distance=8
 max-players=4

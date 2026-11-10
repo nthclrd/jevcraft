@@ -1,7 +1,8 @@
-import mineflayer from 'mineflayer'
+import mineflayer, { type Bot } from 'mineflayer'
 import pathfinderPkg from 'mineflayer-pathfinder'
 import toolPkg from 'mineflayer-tool'
 import { Agent } from './brain/agent.ts'
+import { layaHealth } from './brain/laya.ts'
 import { setBuiltCheck } from './brain/plan.ts'
 import { protectSites } from './skills/index.ts'
 import { progress } from './world/blueprint.ts'
@@ -21,30 +22,66 @@ import { installStateIdFix } from './world/protocol-fixes.ts'
 const { pathfinder, Movements } = pathfinderPkg as any
 const { plugin: tool } = toolPkg as any
 
-if (!config.jev.apiKey) {
-  console.error('TYPESAFE_API_KEY is not set. Export it (e.g. in ~/.zshrc) and retry.')
+// The decision engine is local (or on the machine LAYA_URL names); fail early with an actionable message.
+const health = await layaHealth()
+if (!health.ok) {
+  console.error(`${health.error}\nStart it in another terminal with \`npm run laya\` (needs Python 3.10+), or point LAYA_URL at a running laya-serve.`)
   process.exit(1)
 }
+log('laya', `decision engine at ${config.laya.url} (model ${config.laya.model}; loaded: ${health.models.join(', ') || 'none yet'})`)
 
-const bot = mineflayer.createBot({
-  host: config.host,
-  port: config.port,
-  username: config.username,
-  auth: config.auth,
-  ...(config.version ? { version: config.version } : {}),
-})
-installStateIdFix(bot)
-// Places are per world: the hashed seed from the login packet separates worlds that share a host and port.
-let worldId = 'unknown'
-;(bot as any)._client.once('login', (packet: any) => {
-  const seed = packet.worldState?.hashedSeed ?? packet.hashedSeed
-  if (seed !== undefined) worldId = String(seed)
-})
-bot.loadPlugin(pathfinder)
-bot.loadPlugin(tool)
+let bot: Bot | null = null
+let agent: Agent | null = null
+let resumeGoal = config.goal
+let shuttingDown = false
+let attempts = 0
+let retry: NodeJS.Timeout | undefined
 
-bot.once('spawn', async () => {
-  const movements = new Movements(bot)
+function connect() {
+  if (shuttingDown) return
+  // Places are per world: the hashed seed from the login packet separates worlds that share a host and port.
+  let worldId = 'unknown'
+  const b = mineflayer.createBot({
+    host: config.host,
+    port: config.port,
+    username: config.username,
+    auth: config.auth,
+    // We log 'error' ourselves; the default duplicates every failed reconnect with a full stack trace.
+    logErrors: false,
+    ...(config.version ? { version: config.version } : {}),
+  })
+  bot = b
+  installStateIdFix(b)
+  ;(b as any)._client.once('login', (packet: any) => {
+    const seed = packet.worldState?.hashedSeed ?? packet.hashedSeed
+    if (seed !== undefined) worldId = String(seed)
+  })
+  b.loadPlugin(pathfinder)
+  b.loadPlugin(tool)
+
+  b.once('spawn', () => void onSpawn(b, worldId).catch((e) => log('error', `spawn setup failed: ${(e as Error).message}`)))
+  b.on('kicked', (reason) => log('error', `kicked: ${JSON.stringify(reason)}`))
+  b.on('error', (err) => log('error', err.message))
+  b.on('end', (reason) => {
+    log('info', `disconnected from ${config.host}:${config.port}: ${reason}`)
+    // Resume only work that was still running: a finished goal must not restart on reconnect.
+    if (agent) resumeGoal = agent.active ? agent.goal : ''
+    agent?.stop()
+    agent = null
+    bot = null
+    if (shuttingDown || !config.reconnect) {
+      process.exit(0)
+    }
+    const delay = Math.min(60_000, config.reconnectDelayMs * 2 ** attempts)
+    attempts = Math.min(attempts + 1, 5)
+    log('info', `reconnecting in ${Math.round(delay / 1000)}s (attempt ${attempts})`)
+    retry = setTimeout(connect, delay)
+  })
+}
+
+async function onSpawn(b: Bot, worldId: string) {
+  attempts = 0
+  const movements = new Movements(b)
   movements.canDig = true
   movements.allow1by1towers = true
   movements.allowParkour = true
@@ -52,52 +89,71 @@ bot.once('spawn', async () => {
   movements.liquidCost = 6 // swim only when there is no dry route
   movements.maxDropDown = 3 // falls of 4+ blocks hurt
   movements.scafoldingBlocks = ['dirt', 'cobblestone', 'cobbled_deepslate', 'netherrack']
-    .map((n) => bot.registry.itemsByName[n]?.id).filter((id) => id !== undefined)
-  ;(bot as any).safeMovements = movements
-  ;(bot as any).pathfinder.setMovements(movements)
-  ;(bot as any).pathfinder.thinkTimeout = 8000
+    .map((n) => b.registry.itemsByName[n]?.id).filter((id) => id !== undefined)
+  ;(b as any).safeMovements = movements
+  ;(b as any).pathfinder.setMovements(movements)
+  ;(b as any).pathfinder.thinkTimeout = 8000
 
-  initGameData(bot)
+  initGameData(b)
   const memory = new Memory(`${config.host}_${config.port}_${config.username}_${worldId}`)
   movements.canOpenDoors = true
   protectSites(movements, memory.data.sites)
   setBuiltCheck((name) => {
     const site = memory.data.sites[name]
-    return site?.origin ? progress(bot, site).remaining.length === 0 : false
+    return site?.origin ? progress(b, site).remaining.length === 0 : false
   })
-  const knowledge = new Knowledge(bot)
-  const crafting = new Crafting(bot)
-  const agent = new Agent(bot, new Strategist(createLLM(), bot), crafting, memory, knowledge, new Acquirer(bot, crafting, knowledge, memory))
-  startReflexes(bot, agent)
-  log('info', `spawned at ${bot.entity.position.floored()} on ${bot.version}; perception=${config.perception}; jev=${config.jev.model}`)
+  const knowledge = new Knowledge(b)
+  const crafting = new Crafting(b)
+  const a = new Agent(b, new Strategist(createLLM(), b), crafting, memory, knowledge, new Acquirer(b, crafting, knowledge, memory))
+  agent = a
+  startReflexes(b, a)
+  log('info', `spawned at ${b.entity.position.floored()} on ${b.version} at ${config.host}:${config.port}; perception=${config.perception}; auth=${config.auth}`)
 
-  bot.on('chat', (username, message) => {
-    if (username === bot.username) return
+  b.on('chat', (username, message) => {
+    if (username === b.username) return
     // Free text from a player is an instruction; "!" commands stay as direct controls.
-    if (!message.startsWith('!')) return void agent.instruct(username, message)
+    if (!message.startsWith('!')) return void a.instruct(username, message)
     const [command, ...rest] = message.slice(1).split(' ')
-    if (command === 'goal' && rest.length) void agent.start(rest.join(' '))
-    else if (command === 'stop') (agent.stop(), bot.chat('stopped'))
-    else if (command === 'plan') agent.planView().forEach((l) => bot.chat(l))
-    else if (command === 'status') bot.chat(`${agent.goal || 'idle'} | hp ${Math.round(bot.health)} food ${bot.food} y ${Math.floor(bot.entity.position.y)}`)
-    else if (command === 'usage') bot.chat(usageSummary().slice(0, 250))
+    if (command === 'goal' && rest.length) void a.start(rest.join(' '))
+    else if (command === 'stop') (a.stop(), b.chat('stopped'))
+    else if (command === 'plan') a.planView().forEach((l) => b.chat(l))
+    else if (command === 'status') b.chat(`${a.goal || 'idle'} | hp ${Math.round(b.health)} food ${b.food} y ${Math.floor(b.entity.position.y)}`)
+    else if (command === 'usage') b.chat(usageSummary().slice(0, 250))
   })
 
-  await bot.waitForChunksToLoad()
-  if (config.goal) void agent.start(config.goal)
-  else bot.chat('Prêt. Dis-moi quoi faire dans le chat.')
-})
+  await authenticate(b)
+  await b.waitForChunksToLoad()
+  if (resumeGoal) void a.start(resumeGoal)
+  else b.chat('Prêt. Dis-moi quoi faire dans le chat.')
+}
 
-bot.on('kicked', (reason) => log('error', `kicked: ${JSON.stringify(reason)}`))
-bot.on('error', (err) => log('error', err.message))
-bot.on('end', (reason) => {
-  log('info', `disconnected: ${reason}`)
-  process.exit(0)
-})
+/**
+ * Servers with a login plugin (AuthMe and friends) freeze the player until `/login` or `/register` runs.
+ * MC_PASSWORD covers the common case; MC_AUTH_COMMAND is the escape hatch and may use {username} and {password}.
+ */
+async function authenticate(b: Bot) {
+  const template = config.authCommand || (config.password ? (config.register ? '/register {password} {password}' : '/login {password}') : '')
+  if (!template) return
+  if (template.includes('{password}') && !config.password) {
+    log('error', 'MC_AUTH_COMMAND uses {password} but MC_PASSWORD is empty; not sending it')
+    return
+  }
+  const command = template.replaceAll('{username}', config.username).replaceAll('{password}', config.password)
+  await b.waitForTicks(20)
+  b.chat(command)
+  log('info', `sent server login command: ${config.password ? command.replaceAll(config.password, '***') : command}`)
+  await b.waitForTicks(40)
+}
+
 const shutdown = () => {
+  shuttingDown = true
+  clearTimeout(retry)
   log('info', `usage: ${usageSummary()}`)
-  if (bot.entity) log('info', `final: y ${Math.floor(bot.entity.position.y)}, inventory ${JSON.stringify(Object.fromEntries(bot.inventory.items().map((i) => [i.name, i.count])))}`)
-  bot.quit()
+  if (bot?.entity) log('info', `final: y ${Math.floor(bot.entity.position.y)}, inventory ${JSON.stringify(Object.fromEntries(bot.inventory.items().map((i) => [i.name, i.count])))}`)
+  bot?.quit()
+  setTimeout(() => process.exit(0), 500).unref()
 }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
+
+connect()

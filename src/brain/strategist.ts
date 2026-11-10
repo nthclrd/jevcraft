@@ -1,4 +1,4 @@
-/** System Two. Slow, generative, called rarely: initial plan, recovery when Jev is stuck, lessons after deaths. */
+/** System Two. Slow, generative, called rarely: initial plan, recovery when Laya is stuck, lessons after deaths. */
 import type { Bot } from 'mineflayer'
 import { log } from '../log.ts'
 import type { LLM } from './llm.ts'

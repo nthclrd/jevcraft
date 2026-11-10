@@ -1,7 +1,7 @@
 /**
- * System One. Every decision is ONE Jev request: a `skill` head plus speculative target heads for every offered skill
+ * System One. Every decision is ONE Laya request: a `skill` head plus speculative target heads for every offered skill
  * (fan-out). The action space is derived each step from the acquisition plan, perception, learned knowledge and memory,
- * so Jev only ever picks among valid, executable options, each annotated with the evidence behind it.
+ * so Laya only ever picks among valid, executable options, each annotated with the evidence behind it.
  */
 import type { Bot } from 'mineflayer'
 import { canHarvest, surfaceY, type SkillName } from '../skills/index.ts'
@@ -14,7 +14,7 @@ import { itemFor, progress } from '../world/blueprint.ts'
 import { isCreative } from '../world/creative.ts'
 import type { Memory } from '../world/memory.ts'
 import { depthBand, distanceBucket, type Perception } from '../world/perception.ts'
-import { readChoice, systemOne, type Question } from './jev.ts'
+import { readChoice, systemOne, type Question } from './laya.ts'
 import { describe, type Subgoal } from './plan.ts'
 
 export type Option = SkillName | 'STUCK'
@@ -30,7 +30,7 @@ export interface Decision {
   confidence: number
   targetConfidence: number | null
   judgedDone: number | null
-  /** Jev's calibrated danger score, 0 (safe) .. 3 (critical). */
+  /** Laya's calibrated danger score, 0 (safe) .. 3 (critical). */
   danger: number
   latencyMs: number
   skillProbabilities: Record<string, number>
@@ -317,6 +317,8 @@ function craftsSomething(crafting: Crafting, name: string, table: boolean, inv: 
   return plan.ok && plan.steps.length > 0
 }
 
+const MAX_TARGET_OPTIONS = 32
+
 export async function decide(args: {
   goal: string
   subgoal: Subgoal
@@ -367,13 +369,15 @@ export async function decide(args: {
     skill: { type: 'choice', instructions: { goal: args.goal, rules: RULES, question: 'Which skill should the bot run next?' }, criteria: space.skills },
   }
   for (const [skill, options] of Object.entries(space.targets)) {
+    // laya accepts 100 options per choice, but every option also needs a token span in the head budget.
+    // Targets are built in priority order (plan steps first, then evidence), so a cap keeps the useful ones.
     questions[`target_${skill}`] = {
       type: 'choice',
       instructions: `If the bot runs ${skill} next, which target best advances current_subgoal? Use acquisition_plan, doable_now, the evidence in each option, and recent_actions.`,
-      criteria: options,
+      criteria: Object.fromEntries(Object.entries(options).slice(0, MAX_TARGET_OPTIONS)),
     }
   }
-  // Safety is judged by Jev in the same request; code enforces it (confidence-routing pattern).
+  // Safety is judged by Laya in the same request; code enforces it (confidence-routing pattern).
   questions.danger = {
     type: 'score',
     instructions: 'How dangerous is the bot situation right now, given threats, time, health, gear and hazards in the state?',
